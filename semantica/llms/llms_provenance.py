@@ -119,6 +119,15 @@ class LLMProvenanceMixin:
         """
         Track LLM API call with provenance.
 
+        The recorded model is resolved here, once, so every path that writes
+        an entry inherits the same rule (#2051): a per-call ``model=`` is
+        recorded when it is a string that names a model - its ``strip()`` is
+        not empty - and any other value falls back to the model the wrapper
+        was constructed with. That covers a value that is absent, ``None``,
+        not a string, empty or whitespace-only; a value that names no model is
+        never recorded as one, and a value that is not a string never costs
+        the caller the entry.
+
         Args:
             call_id: Unique identifier for this API call
             prompt: Input prompt
@@ -145,6 +154,19 @@ class LLMProvenanceMixin:
             activity_started_at_time = metadata.pop("activity_started_at_time", None)
             activity_ended_at_time = metadata.pop("activity_ended_at_time", None)
 
+            # Resolve the model once, here, so every path that writes an entry
+            # inherits the same rule (#2051): a per-call ``model=`` wins when
+            # it names a model, and anything else - absent, None, empty, blank
+            # or not a string - falls back to the model the wrapper was
+            # constructed with. The call sites only forward the raw value;
+            # they never choose what gets recorded.
+            per_call_model = metadata.pop("model", None)
+            entry_model = (
+                per_call_model
+                if isinstance(per_call_model, str) and per_call_model.strip()
+                else getattr(self, "model", "unknown")
+            )
+
             self._prov_manager.track_entity(
                 entity_id=call_id,
                 source=f"{self.__class__.__name__}_api",
@@ -156,7 +178,7 @@ class LLMProvenanceMixin:
                 activity_started_at_time=activity_started_at_time,
                 activity_ended_at_time=activity_ended_at_time,
                 metadata={
-                    "model": getattr(self, 'model', 'unknown'),
+                    "model": entry_model,
                     "prompt_preview": prompt[:200] if len(prompt) > 200 else prompt,
                     "response_preview": response_preview,
                     **metadata
@@ -287,6 +309,7 @@ class GroqLLMWithProvenance(LLMProvenanceMixin):
                 latency_seconds=elapsed,
                 activity_started_at_time=activity_started_at_time,
                 activity_ended_at_time=activity_ended_at_time,
+                model=kwargs.get("model"),
                 temperature=kwargs.get('temperature'),
                 max_tokens=kwargs.get('max_tokens'),
                 top_p=kwargs.get('top_p')
@@ -301,6 +324,7 @@ class GroqLLMWithProvenance(LLMProvenanceMixin):
             "groq_structured",
             prompt,
             lambda: self._llm.generate_structured(prompt, **kwargs),
+            model=kwargs.get("model"),
         )
 
     def generate_typed(self, prompt: str, schema, max_retries: int = 3, **kwargs):
@@ -313,6 +337,7 @@ class GroqLLMWithProvenance(LLMProvenanceMixin):
                 prompt, schema, max_retries=max_retries, **kwargs
             ),
             max_retries=max_retries,
+            model=kwargs.get("model"),
         )
 
     def __getattr__(self, name):
@@ -399,6 +424,7 @@ class OpenAILLMWithProvenance(LLMProvenanceMixin):
                 latency_seconds=elapsed,
                 activity_started_at_time=activity_started_at_time,
                 activity_ended_at_time=activity_ended_at_time,
+                model=kwargs.get("model"),
                 temperature=kwargs.get('temperature'),
                 max_tokens=kwargs.get('max_tokens')
             )
@@ -412,6 +438,7 @@ class OpenAILLMWithProvenance(LLMProvenanceMixin):
             "openai_structured",
             prompt,
             lambda: self._llm.generate_structured(prompt, **kwargs),
+            model=kwargs.get("model"),
         )
 
     def generate_typed(self, prompt: str, schema, max_retries: int = 3, **kwargs):
@@ -424,6 +451,7 @@ class OpenAILLMWithProvenance(LLMProvenanceMixin):
                 prompt, schema, max_retries=max_retries, **kwargs
             ),
             max_retries=max_retries,
+            model=kwargs.get("model"),
         )
 
     def __getattr__(self, name):
@@ -489,6 +517,7 @@ class HuggingFaceLLMWithProvenance(LLMProvenanceMixin):
                 latency_seconds=elapsed,
                 activity_started_at_time=activity_started_at_time,
                 activity_ended_at_time=activity_ended_at_time,
+                model=kwargs.get("model"),
                 max_length=kwargs.get('max_length'),
                 temperature=kwargs.get('temperature')
             )
@@ -502,6 +531,7 @@ class HuggingFaceLLMWithProvenance(LLMProvenanceMixin):
             "hf_structured",
             prompt,
             lambda: self._llm.generate_structured(prompt, **kwargs),
+            model=kwargs.get("model"),
         )
 
     def generate_typed(self, prompt: str, schema, max_retries: int = 3, **kwargs):
@@ -514,6 +544,7 @@ class HuggingFaceLLMWithProvenance(LLMProvenanceMixin):
                 prompt, schema, max_retries=max_retries, **kwargs
             ),
             max_retries=max_retries,
+            model=kwargs.get("model"),
         )
 
     def __getattr__(self, name):
@@ -600,6 +631,7 @@ class LiteLLMWithProvenance(LLMProvenanceMixin):
                 latency_seconds=elapsed,
                 activity_started_at_time=activity_started_at_time,
                 activity_ended_at_time=activity_ended_at_time,
+                model=kwargs.get("model"),
                 provider=kwargs.get('provider')
             )
 
@@ -612,6 +644,7 @@ class LiteLLMWithProvenance(LLMProvenanceMixin):
             "lite_structured",
             prompt,
             lambda: self._llm.generate_structured(prompt, **kwargs),
+            model=kwargs.get("model"),
         )
 
     def generate_typed(self, prompt: str, schema, max_retries: int = 3, **kwargs):
@@ -624,6 +657,7 @@ class LiteLLMWithProvenance(LLMProvenanceMixin):
                 prompt, schema, max_retries=max_retries, **kwargs
             ),
             max_retries=max_retries,
+            model=kwargs.get("model"),
         )
 
     def __getattr__(self, name):
