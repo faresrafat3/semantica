@@ -343,6 +343,7 @@ class GroqLLMWithProvenance(LLMProvenanceMixin):
                 e,
                 start_time,
                 activity_started_at_time,
+                model=kwargs.get("model"),
                 temperature=kwargs.get("temperature"),
                 max_tokens=kwargs.get("max_tokens"),
                 top_p=kwargs.get("top_p"),
@@ -471,6 +472,7 @@ class OpenAILLMWithProvenance(LLMProvenanceMixin):
                 e,
                 start_time,
                 activity_started_at_time,
+                model=kwargs.get("model"),
                 temperature=kwargs.get("temperature"),
                 max_tokens=kwargs.get("max_tokens"),
             )
@@ -551,6 +553,11 @@ class HuggingFaceLLMWithProvenance(LLMProvenanceMixin):
     HuggingFace LLM with provenance tracking.
 
     Wraps the original HuggingFaceLLM and tracks all generations.
+
+    The wrapped provider loads its model in its constructor and its
+    ``generate`` reads only the generation options, so a per-call ``model``
+    is forwarded and then ignored. Entries therefore record the constructor
+    model, which is the one the call actually used (#2051).
     """
 
     def __init__(
@@ -612,7 +619,6 @@ class HuggingFaceLLMWithProvenance(LLMProvenanceMixin):
                 latency_seconds=elapsed,
                 activity_started_at_time=activity_started_at_time,
                 activity_ended_at_time=activity_ended_at_time,
-                model=kwargs.get("model"),
                 max_length=kwargs.get('max_length'),
                 temperature=kwargs.get('temperature')
             )
@@ -626,7 +632,6 @@ class HuggingFaceLLMWithProvenance(LLMProvenanceMixin):
             "hf_structured",
             prompt,
             lambda: self._llm.generate_structured(prompt, **kwargs),
-            model=kwargs.get("model"),
         )
 
     def generate_typed(self, prompt: str, schema, max_retries: int = 3, **kwargs):
@@ -639,7 +644,6 @@ class HuggingFaceLLMWithProvenance(LLMProvenanceMixin):
                 prompt, schema, max_retries=max_retries, **kwargs
             ),
             max_retries=max_retries,
-            model=kwargs.get("model"),
         )
 
     def __getattr__(self, name):
@@ -702,6 +706,7 @@ class LiteLLMWithProvenance(LLMProvenanceMixin):
                 e,
                 start_time,
                 activity_started_at_time,
+                model=kwargs.get("model"),
                 provider=kwargs.get("provider"),
             )
             raise

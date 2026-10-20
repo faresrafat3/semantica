@@ -48,6 +48,21 @@ _WRAPPER_CLASSES = {
 }
 _WRAPPER_NAMES = list(_WRAPPER_CLASSES)
 
+# The HuggingFace provider loads its model in its constructor and its generate
+# reads only the generation options, so a per-call ``model`` is ignored and the
+# constructor model is the one the call actually used.
+_HONOURS_PER_CALL_MODEL = {
+    "GroqLLMWithProvenance": True,
+    "OpenAILLMWithProvenance": True,
+    "HuggingFaceLLMWithProvenance": False,
+    "LiteLLMWithProvenance": True,
+}
+
+
+def _expected_model(wrapper_name, per_call="per-call-model"):
+    """The model an entry should name for *wrapper_name*."""
+    return per_call if _HONOURS_PER_CALL_MODEL[wrapper_name] else "constructor-model"
+
 
 class _RecordingProvenanceManager:
     """Capture the kwargs of every ``track_entity`` call."""
@@ -490,7 +505,7 @@ class TestRecordedModelFollowsTheCall:
 
         wrapper.generate("question", model="per-call-model")
 
-        assert recorder.calls[0]["metadata"]["model"] == "per-call-model"
+        assert recorder.calls[0]["metadata"]["model"] == _expected_model(wrapper_name)
 
     @pytest.mark.parametrize("wrapper_name", _WRAPPER_NAMES)
     def test_call_without_a_model_records_the_constructor_model(
@@ -512,7 +527,7 @@ class TestRecordedModelFollowsTheCall:
 
         wrapper.generate_structured("question", model="per-call-model")
 
-        assert recorder.calls[0]["metadata"]["model"] == "per-call-model"
+        assert recorder.calls[0]["metadata"]["model"] == _expected_model(wrapper_name)
 
     @pytest.mark.parametrize("wrapper_name", _WRAPPER_NAMES)
     def test_typed_path_records_the_per_call_model(self, wrapper_name, monkeypatch):
@@ -521,7 +536,15 @@ class TestRecordedModelFollowsTheCall:
 
         wrapper.generate_typed("question", schema=object, model="per-call-model")
 
-        assert recorder.calls[0]["metadata"]["model"] == "per-call-model"
+        assert recorder.calls[0]["metadata"]["model"] == _expected_model(wrapper_name)
+
+    def test_huggingface_records_the_model_its_provider_loaded(self, monkeypatch):
+        """HF loads its model at construction, so a per-call value never runs."""
+        wrapper, recorder = _wrapper_for("HuggingFaceLLMWithProvenance", monkeypatch)
+
+        wrapper.generate("question", model="per-call-model")
+
+        assert recorder.calls[0]["metadata"]["model"] == "constructor-model"
 
     @pytest.mark.parametrize("wrapper_name", _WRAPPER_NAMES)
     def test_none_model_falls_back_to_the_constructor_model(
@@ -647,3 +670,39 @@ class TestAModelThatNamesNoModelFallsBack:
         stored = manager.storage.retrieve_all(entity_type="llm_generation")
         assert len(stored) == 1
         assert stored[0].metadata["model"] == "constructor-model"
+
+
+class _RaisingLLM(_StubLLM):
+    """A stub whose generation entry points raise, to drive the failure path."""
+
+    def generate(self, prompt, **kwargs):
+        raise RuntimeError("provider failed")
+
+
+class TestFailedCallsRecordTheModelTheyWereGiven:
+    """A failed call names the model it asked for, not the constructor's."""
+
+    @pytest.mark.parametrize("wrapper_name", _WRAPPER_NAMES)
+    def test_failed_generate_records_the_per_call_model(
+        self, wrapper_name, monkeypatch
+    ):
+        wrapper, recorder = _wrapper_for(wrapper_name, monkeypatch)
+        wrapper._llm = _RaisingLLM()
+
+        with pytest.raises(RuntimeError):
+            wrapper.generate("question", model="per-call-model")
+
+        assert recorder.calls, "no entry was recorded for the failed call"
+        assert recorder.calls[0]["metadata"]["model"] == _expected_model(wrapper_name)
+
+    @pytest.mark.parametrize("wrapper_name", _WRAPPER_NAMES)
+    def test_failed_generate_without_a_model_keeps_the_constructor_model(
+        self, wrapper_name, monkeypatch
+    ):
+        wrapper, recorder = _wrapper_for(wrapper_name, monkeypatch)
+        wrapper._llm = _RaisingLLM()
+
+        with pytest.raises(RuntimeError):
+            wrapper.generate("question")
+
+        assert recorder.calls[0]["metadata"]["model"] == "constructor-model"
